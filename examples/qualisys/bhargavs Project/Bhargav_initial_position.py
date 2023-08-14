@@ -17,7 +17,7 @@ from cflib.crazyflie.syncLogger import SyncLogger
 from cflib.utils import uri_helper
 
 # URI to the Crazyflie to connect to
-uri = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E7E7')
+uri = uri_helper.uri_from_env(default='radio://0/100/2M/E7E7E7E701')
 
 # The name of the rigid body in QTM that represents the Crazyflie
 rigid_body_name = 'cf'
@@ -60,8 +60,7 @@ class QtmWrapper(Thread):
         await self._close()
 
     async def _connect(self):
-        qtm_instance = await self._discover()
-        host = qtm_instance.host
+        host = "IP_Address"
         print('Connecting to QTM on ' + host)
         self.connection = await qtm.connect(host)
 
@@ -143,8 +142,16 @@ pd_controller = PDController(KP, KD, TS)
 
 # Function to get current state
 def get_current_state(cf):
-    position = cf.position()
-    return [position.x, position.y]
+    log_config = LogConfig(name='StateEstimate', period_in_ms=100)
+    log_config.add_variable('stateEstimate.x', 'float')
+    log_config.add_variable('stateEstimate.y', 'float')
+    log_config.add_variable('stateEstimate.z', 'float')
+
+    with SyncLogger(cf, log_config) as logger:
+        for log_entry in logger:
+            data = log_entry[1]
+            current_state = [data['stateEstimate.x'], data['stateEstimate.y'], data['stateEstimate.z']]
+            return current_state
 
 # Function to choose leader
 def choose_leader(current_state):
@@ -161,7 +168,7 @@ if __name__ == '__main__':
     cflib.crtp.init_drivers()
 
     # Connect to QTM
-    qtm_wrapper = QtmWrapper(rigid_body_name)
+    qtm_wrapper = MockQtmWrapper(rigid_body_name)
 
     with SyncCrazyflie(uri, cf=Crazyflie(rw_cache='./cache')) as scf:
         cf = scf.cf

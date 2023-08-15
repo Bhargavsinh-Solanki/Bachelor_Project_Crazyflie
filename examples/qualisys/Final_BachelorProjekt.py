@@ -282,8 +282,7 @@ if __name__ == '__main___':
 
         elif current_time < 30:# elif
                 state = "flight"
-                #go_to_xy(cf, [current_x, current_y, current_z, current_yaw], des_x=-0.8, current_height=des_z)
-                # GoTo(cf, 0.8, des_z)
+                #print("Flight")
                 #
                 # Calculate v_x from Liang's method
                 factor = 10

@@ -4,11 +4,11 @@ cflib is an API written in Python that is used to communicate with the Crazyflie
 and Crazyflie 2.0 quadcopters. It is intended to be used by client software to
 communicate with and control a Crazyflie quadcopter. For instance the [Crazyflie PC client](https://www.github.com/bitcraze/crazyflie-clients-python)  uses the cflib.
 
-See [below](#platform-notes) for platform specific instruction.
+See [below](#platform-notes) for platform-specific instruction.
 For more info see our [documentation](https://www.bitcraze.io/documentation/repository/crazyflie-lib-python/master/).
 
 ## Installation
-See the [installation instructions](docs/installation/install.md) in the github docs folder.
+See the [installation instructions](docs/installation/install.md) in the GitHub docs folder.
 
 ## Official Documentation
 
@@ -23,4 +23,9 @@ Run the automated build locally to test your code
 	python3 tools/build/build
 
 
- Path for the file: Examples/ Qualisys/ 
+ Path for the file: BS_Bachelor_Project.py
+ Steps: 
+ * Check the crazyflie uri radio address
+ * Check the rigid body name
+ * Check the IP address of the Qualisys Tracking System
+ * Now you are ready the run the file.

@@ -23,7 +23,7 @@ Run the automated build locally to test your code
 	python3 tools/build/build
 
 
- # Path for the file: "BSBachelorProject.py"
+ # Path for the file: "BS_Bachelor_Project/BSBachelorProject.py"
  
  ## Steps: 
  * Check the crazyflie uri radio address

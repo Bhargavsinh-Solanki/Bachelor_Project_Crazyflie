@@ -22,7 +22,7 @@ Run the automated build locally to test your code
 
 	python3 tools/build/build
 
-# Bachelor Project data is stored in the folder "BSBachelorProject".
+# Bachelor Project data is stored in the folder "BS_Bachelor_Project".
  ## Path for the file: "BSBachelorProject/BSBachelorProject.py"
  
  ## Steps: 

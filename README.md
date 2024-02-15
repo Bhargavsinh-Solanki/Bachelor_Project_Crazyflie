@@ -23,8 +23,9 @@ Run the automated build locally to test your code
 	python3 tools/build/build
 
 
- Path for the file: BS_Bachelor_Project.py
- Steps: 
+ # Path for the file: BS_Bachelor_Project.py
+ 
+ ## Steps: 
  * Check the crazyflie uri radio address
  * Check the rigid body name
  * Check the IP address of the Qualisys Tracking System

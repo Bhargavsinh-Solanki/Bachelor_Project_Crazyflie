@@ -3,17 +3,11 @@ import math
 import time
 import xml.etree.cElementTree as ET
 from threading import Thread
-from itertools import count
-import random
-import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
 
 import numpy as np
-import pandas as pandas
+import pandas as pd
 import qtm
 from distutils.ccompiler import gen_preprocess_options
-import csv
-import datetime
 
 import cflib.crtp
 from cflib.crazyflie import Crazyflie
@@ -33,6 +27,11 @@ rigid_body_name = 'cf1'
 
 # True: send position and orientation; False: send position only
 send_full_pose = False 
+
+p1 = [1,0,1]
+p2 = [-1,0,1]
+
+controller = PDController()
 
 class QtmWrapper(Thread):
     def __init__(self, body_name):
@@ -62,7 +61,7 @@ class QtmWrapper(Thread):
 
     async def _connect(self):
         qtm_instance = await self._discover()
-        host = '192.168.1.102'
+        host = qtm_instance.host
         print('Connecting to QTM on ' + host)
         self.connection = await qtm.connect(host)
 
@@ -112,7 +111,7 @@ class QtmWrapper(Thread):
     async def _close(self):
         await self.connection.stream_frames_stop()
         self.connection.disconnect()
-    
+
 
 def wait_for_position_estimator(scf):
     print('Waiting for estimator to find position...')
@@ -185,29 +184,19 @@ def send_extpose_rot_matrix(cf, x, y, z, rot):
         cf.extpos.send_extpos(x, y, z)
 
 
-# def go_to_height(cf, position, des_z):
-#     act_z = position[2]
-#     K_p = 1.2
-#     vz = K_p*(des_z - act_z)
-
-#     k_P_xy = 1.0
-
-    #print("Actual height: ", act_z)
-    # cf.commander.send_velocity_world_setpoint(0.0-k_P_xy*position[0], 0.0-k_P_xy*position[1], vz, -0.01*position[3])
-
-def go_to_height_with_pd(cf, position, des_z, pd):
+# Here the drone goes to the particular height and it stabiles with the help of the P Controller
+def go_to_height(cf, position, des_z):
     act_z = position[2]
-    K_p = pd.k_P_z
-    # K-p = 0.4
+    K_p = 1.2
     vz = K_p*(des_z - act_z)
 
-    # k_P_xy = 0.4
-    k_P_xy = pd.k_P_xy
+    k_P_xy = 1.0
 
+    print("Actual height: ", act_z)
     cf.commander.send_velocity_world_setpoint(0.0-k_P_xy*position[0], 0.0-k_P_xy*position[1], vz, -0.01*position[3])
-    # cf.commander.send_velocity_world_setpoint(0, 0, vz, -0.01*position[3])
 
 
+#Always give 
 
 def reset_estimator(cf):
     cf.param.set_value('kalman.resetEstimation', '1')
@@ -226,59 +215,6 @@ def activate_kalman_estimator(cf):
     cf.param.set_value('locSrv.extQuatStdDev', 0.06)
 
 
-class PDController:
-    def __init__(self):
-        self.KP = 2.3
-        self.KD = 0.557
-
-
-        # Position Controller parameters
-        self.k_P_xy = 1.2
-        self.k_P_z = 1.2
-        self.RX = 0.07
-        
-        self.last_pos = [0.0, 0.0, 0.0]
-        self.waypoint_time = 0.1
-
-
-    def get_vx_from_controller(self, currentPos, p1, p2, y_L=0.0):
-        x_e1 = currentPos[0] - p1[0]
-        x_e2 = currentPos[0] - p2[0]
-
-
-        xedt1 = (x_e1 - (self.last_pos[0]+ p1[0]))/self.waypoint_time
-        xedt2 = (x_e2 - (self.last_pos[0]+ p2[0]))/self.waypoint_time
-
-
-        # y_e = currentPos[1] - y_L
-        
-
-        
-        vx = -((self.KP*x_e1+self.KD*xedt1)*np.exp(-x_e1**2/(2*self.RX**2)) + (self.KP*x_e2+self.KD*xedt2)*np.exp(-x_e2**2/(2*self.RX**2)))
-
-        
-        return vx
-
-index = count()
-yVals = []
-xVals = []
-
-
-def animate(i):
-    xVals.append(next(index))
-    #yVals.append(qtm_wrapper.pose[0][0]/1000.)
-    yVals.append(random.randint(0, 10))
-
-    plt.cla()
-    plt.plot(xVals, yVals)
-
-# ani = FuncAnimation(plt.gcf(), animate, interval=500)
-# plt.tight_layout()
-# plt.show()
-
-
-
-
 if __name__ == '__main__':
     cflib.crtp.init_drivers()
 
@@ -288,6 +224,13 @@ if __name__ == '__main__':
     with SyncCrazyflie(uri, cf=Crazyflie(rw_cache='./cache')) as scf:
         cf = scf.cf
         trajectory_id = 1
+
+        DEFAULT_HEIGHT = 0.3
+        TS = 0.1
+        KP = 2.3
+        KD = 0.557
+        RX = 0.14
+        RY = 0.14
 
         # Set up a callback to handle data from QTM
         qtm_wrapper.on_pose = lambda pose: send_extpose_rot_matrix(
@@ -302,24 +245,7 @@ if __name__ == '__main__':
         current_yaw = qtm_wrapper.pose[1][0]
 
         start_time = time.time()
-
-        pd = PDController()
-
-        state = "null"
-        current_xVals = []
-        p1Vals = []
-        p2Vals = []
-        vxVals = []
-        timeVals = []
-        XVVals = []
-        X_e1Vals = []
-        X_e2Vals = []
-
-
-        now = datetime.datetime.now()  # Generate a unique timestamp
-        timestamp = now.strftime("%Y-%m-%d-%H-%M-%S")  # Format timestamp as a string
-        filename = f'drone_data_{timestamp}.csv'  # Create a unique file name
-
+        prev_time = start_time
 
         # for i in range(10000):
         while(True):
@@ -332,78 +258,101 @@ if __name__ == '__main__':
 
             cur_time = time.time() - start_time
 
+            # print(cur_time)
 
-            des_z = 1.0
+            if cur_time < 5:    # try to take off and hover for the first 5 seconds
+                go_to_height(cf, [current_x, current_y, current_z, current_yaw], des_z=1.0)
 
-            
-            if cur_time < 3:    # try to take off and hover for the first 3 seconds
-                state = "takeoff"
-                go_to_height_with_pd(cf, [current_x, current_y, current_z, current_yaw], des_z=des_z, pd=pd)
-
-            elif 3 < cur_time < 10:# elif
-                state = "flight"
-            
-                # Calculate v_x from Liang's method
-                factor = 10
-                p1 = [0.1, 0.0, des_z]
-                p2 = [-0.1, 0.0, des_z]
-                X_e1 = pd.current_pos[0] - p1[0]
-                X_e2 = pd.current_pos[0] - p2[0]
-                v_x = pd.get_vx_from_controller([current_x, current_y, current_z, current_yaw], p1, p2)
-                xv = current_x + v_x*pd.waypoint_time
-                
-                
-                # just make the y- and z-velocity zero (also Yaw) with a P-controller
-                
-                v_y = 0.0-pd.k_P_xy*current_y
-                v_z = pd.k_P_z*(des_z - current_z)
-                v_yaw = -0.01*current_yaw
-                cf.commander.send_velocity_world_setpoint(v_x, 0*v_y, 0*v_z, 0*v_yaw)
-
-                pd.last_pos = [current_x, current_y, current_z, current_yaw]
-
-                target_reached = 0.90*p1[0] < current_x < p1[0]* 0.95 or abs(0.90*p2[0]) < abs(current_x) < abs(p2[0]* 0.95)
-            
-                if not target_reached:
-        
-                    current_xVals.append(current_x ) # HEEEEEEEEEEEEEEEERE FAAAAAAAAACTOOOOOOOOOOOOOR
-                    p1Vals.append(p1[0])
-                    p2Vals.append(p2[0])
-                    vxVals.append(v_x)
-                    timeVals.append(cur_time)
-                    XVVals.append(xv)
-                    X_e1Vals.append(X_e1)
-                    X_e2Vals.append(X_e2)
-                if target_reached:
-                    print("Target reached")
-                    
-                    for i in range(100):
-                        go_to_height_with_pd(cf, [current_x, current_y, current_z, current_yaw], des_z=des_z, pd=pd)
-                        time.sleep(0.01)
-                    
-                    # break
-
-            
-                    
-                    if current_z>0.2:
-                        go_to_height_with_pd(cf, [current_x, current_y, current_z, current_yaw], des_z=-0.05, pd=pd)
-                    else:
-                        cf.commander.send_velocity_world_setpoint(0, 0, 0, 0) # set all the motors off
+            else:  # land smoothly to 0.2, and then shut down the motors
+                if current_z>0.2:
+                    go_to_height(cf, [current_x, current_y, current_z, current_yaw], des_z=-0.05)
+                else:
+                    cf.commander.send_velocity_world_setpoint(0, 0, 0, 0) # set all the motors off
                     break
+            # print(qtm_wrapper.pose[0][2]/1000)
+
+            # time.sleep(0.1)
+
+        # qtm_wrapper.close()
 
 
-    # Save the data to a CSV file
-    data = zip(timeVals, p1Vals, p2Vals, X_e1Vals, X_e2Vals, xv, vxVals, current_xVals)
-    with open(filename,'w', newline='') as csvfile:
-        csvwriter = csv.writer(csvfile)
-        csvwriter.writerow(['Time', 'P1', 'P2', 'x_e1', 'x_e2', 'xv', 'vx', 'current_x'])
-        csvwriter.writerows(data)
 
-    print("Data saved to in file: ", filename)
 
-    
+        #take_off(cf, [current_x, current_y, current_z+0.5, current_yaw])
+        # current_pose = np.array([current_x, current_y, current_yaw])
+
+        # Desired = prepare_desired_trajactory(current_pose=current_pose, SimulationTime=50, track='sine')
+
+        # state_sim = np.array([current_pose])
+
+        # xe_last = 0
+        # ye_last = 0
+        # # states_debug = np.empty((1,15))
+        # for ii, desired in enumerate(Desired):
+        #     start_time = time.time()
+
+        #     current_x = qtm_wrapper.pose[0][0]/1000.
+        #     current_y = qtm_wrapper.pose[0][1]/1000.
+        #     current_z = qtm_wrapper.pose[0][2]/1000.
+        #     current_yaw = qtm_wrapper.pose[1][0]
+        #     current_pose = np.array([[current_x, current_y, current_yaw]])
+
+        #     state_sim = np.append(state_sim, current_pose, 0)
+        #     xe_in = state_sim[-1, 0]-Desired[ii, 0]
+        #     ye_in = state_sim[-1, 1]-Desired[ii, 1]
+        #     ang_in = Desired[ii, 2]
+
+        #     ang_temp = -ang_in
+        #     xe_o = xe_in*np.cos(ang_temp) - ye_in*np.sin(ang_temp)
+        #     ye_o = xe_in*np.sin(ang_temp) + ye_in*np.cos(ang_temp)
+
+        #     xedt = (xe_o-xe_last)/TS
+        #     yedt = (ye_o-ye_last)/TS
+
+        #     vx = -(KP*xe_o+KD*xedt)*np.exp(-xe_o**2/(2*RX**2))
+        #     vy = -(KP*ye_o+KD*yedt)*np.exp(-ye_o**2/(2*RY**2))
+
+        #     print(xe_o, vx)
+        #     print(current_x)
+
+        #     vx_o = np.sign(vx)*np.min([np.abs(vx), 1])
+        #     vy_o = np.sign(vy)*np.min([np.abs(vy), 1])
+        #     vyaw = 0
+
+            # vyaw = np.sign(vyaw)*np.min([np.abs(vyaw),30])
+
+
+            # vx_o = np.sign(vx_o)*np.min([np.abs(vx_o),0.5])
+            # vy_o = np.sign(vy_o)*np.min([np.abs(vy_o),0.5])
+            # vyaw = np.sign(vyaw)*np.min([np.abs(vyaw),30])
+            # print(vx_o, vy_o, vyaw)
+            #cf.commander.send_hover_setpoint(vx_o, vy_o, vyaw, DEFAULT_HEIGHT)
+
+            # xe_last = xe_o
+            # ye_last = ye_o
+
+            # states_temp = [[desired[0], desired[1], current_x, current_y, xe_in,
+            #                 ye_in, ang_in, xe_o, ye_o, xedt, yedt, vx, vy, vx_o, vy_o]]
+            # if ii == 0:
+            #     states_debug = states_temp
+            # else:
+            #     states_debug = np.append(states_debug, states_temp, 0)
+            # if TS-(time.time() - start_time) > 0:
+            #     time.sleep(TS-(time.time() - start_time))
+
+
+
+
+
+        # take_off(cf, [current_x, current_y, current_z, current_yaw])
+        #
+
+        
+        
+        #land(cf, [current_x, current_y, current_z])
+
+    # indexes = ['desired_x', 'desired_y', 'current_x', 'current_y', 'xe_in', 'ye_in',
+    #            'ang_in', 'xe_o', 'ye_o', 'xedt', 'yedt', 'vx', 'vy', 'vx_o', 'vy_o']
+    # df = pd.DataFrame(data=states_debug, columns=indexes)
+    # df.to_csv('./debug.csv')
     qtm_wrapper.close()
-
-    plt.plot(xv, label="xv")
-    plt.tight_layout()
-    plt.show()

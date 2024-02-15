@@ -3,17 +3,11 @@ import math
 import time
 import xml.etree.cElementTree as ET
 from threading import Thread
-from itertools import count
-import random
-import matplotlib.pyplot as plt
-from matplotlib.animation import FuncAnimation
 
 import numpy as np
-import pandas as pandas
+import pandas as pd
 import qtm
 from distutils.ccompiler import gen_preprocess_options
-import csv
-import datetime
 
 import cflib.crtp
 from cflib.crazyflie import Crazyflie
@@ -25,6 +19,7 @@ from cflib.crazyflie.syncLogger import SyncLogger
 from cflib.positioning.motion_commander import MotionCommander
 from cflib.utils import uri_helper
 
+
 # URI to the Crazyflie to connect to
 uri = uri_helper.uri_from_env(default='radio://0/100/2M/E7E7E7E701')
 
@@ -33,6 +28,10 @@ rigid_body_name = 'cf1'
 
 # True: send position and orientation; False: send position only
 send_full_pose = False 
+
+p1 = [1,0,1]
+p2 = [-1,0,1]
+
 
 class QtmWrapper(Thread):
     def __init__(self, body_name):
@@ -62,7 +61,7 @@ class QtmWrapper(Thread):
 
     async def _connect(self):
         qtm_instance = await self._discover()
-        host = '192.168.1.102'
+        host = qtm_instance.host
         print('Connecting to QTM on ' + host)
         self.connection = await qtm.connect(host)
 
@@ -112,7 +111,7 @@ class QtmWrapper(Thread):
     async def _close(self):
         await self.connection.stream_frames_stop()
         self.connection.disconnect()
-    
+
 
 def wait_for_position_estimator(scf):
     print('Waiting for estimator to find position...')
@@ -185,6 +184,7 @@ def send_extpose_rot_matrix(cf, x, y, z, rot):
         cf.extpos.send_extpos(x, y, z)
 
 
+# Here the drone goes to the particular height and it stabiles with the help of the P Controller
 # def go_to_height(cf, position, des_z):
 #     act_z = position[2]
 #     K_p = 1.2
@@ -192,21 +192,51 @@ def send_extpose_rot_matrix(cf, x, y, z, rot):
 
 #     k_P_xy = 1.0
 
-    #print("Actual height: ", act_z)
-    # cf.commander.send_velocity_world_setpoint(0.0-k_P_xy*position[0], 0.0-k_P_xy*position[1], vz, -0.01*position[3])
+#     print("Actual height: ", act_z)
+#     cf.commander.send_velocity_world_setpoint(0.0-k_P_xy*position[0], 0.0-k_P_xy*position[1], vz, -0.01*position[3])
 
-def go_to_height_with_pd(cf, position, des_z, pd):
-    act_z = position[2]
-    K_p = pd.k_P_z
-    # K-p = 0.4
-    vz = K_p*(des_z - act_z)
+def go_to_height(cf, position, des_z=1.0): 
+    error_z = des_z - current_z
+    K_p = 1.2
+    vz = K_p * error_z
+    print(f"Current Z: {position[2]}, Desired Z: {des_z}, Velocity Z: {vz}")
+    cf.cmd_velocity_world_set(0, 0, vz, position[3])
 
-    # k_P_xy = 0.4
-    k_P_xy = pd.k_P_xy
 
-    cf.commander.send_velocity_world_setpoint(0.0-k_P_xy*position[0], 0.0-k_P_xy*position[1], vz, -0.01*position[3])
-    # cf.commander.send_velocity_world_setpoint(0, 0, vz, -0.01*position[3])
+class PDController:
+    def __init__(self):
+        self.KP = 2.3
+        self.KD = 0.557
+        self.RX = 0.14
+        self.RY = 0.14
 
+        self.lastPos = [0, 0, 1]
+        self.waypoint_time = 0.1
+
+
+    def xVelocity(self, currentPos, p1, p2):
+        # twoDistances = self.calculateOptimal(currentPos, p1, p2)
+
+        x_e1 = currentPos[0] - p1[0]
+        x_e2 = currentPos[0] - p2[0]
+
+
+        xedt1 = (x_e1 - self.lastPos[0])/self.waypoint_time
+        xedt2 = (x_e2 - self.lastPos[0]) / self.waypoint_time
+
+        vx = -((self.KP*x_e1+self.KD*xedt1)*np.exp(-x_e1**2/(2*self.RX**2)) + (self.KP*x_e2+self.KD*xedt2)*np.exp(-x_e2**2/(2*self.RX**2)))
+
+        return vx
+
+    def droneUpdate(controller, currentPos, p1, p2, t2, t1, Rn):
+
+        """
+        Update drone's x position based on the velocity calculated from xVelocity method.
+        """
+        vx = controller.xVelocity(currentPos, p1, p2)
+        xv = currentPos[0] + vx * (t2 - t1) + Rn
+
+        return xv
 
 
 def reset_estimator(cf):
@@ -226,59 +256,6 @@ def activate_kalman_estimator(cf):
     cf.param.set_value('locSrv.extQuatStdDev', 0.06)
 
 
-class PDController:
-    def __init__(self):
-        self.KP = 2.3
-        self.KD = 0.557
-
-
-        # Position Controller parameters
-        self.k_P_xy = 1.2
-        self.k_P_z = 1.2
-        self.RX = 0.07
-        
-        self.last_pos = [0.0, 0.0, 0.0]
-        self.waypoint_time = 0.1
-
-
-    def get_vx_from_controller(self, currentPos, p1, p2, y_L=0.0):
-        x_e1 = currentPos[0] - p1[0]
-        x_e2 = currentPos[0] - p2[0]
-
-
-        xedt1 = (x_e1 - (self.last_pos[0]+ p1[0]))/self.waypoint_time
-        xedt2 = (x_e2 - (self.last_pos[0]+ p2[0]))/self.waypoint_time
-
-
-        # y_e = currentPos[1] - y_L
-        
-
-        
-        vx = -((self.KP*x_e1+self.KD*xedt1)*np.exp(-x_e1**2/(2*self.RX**2)) + (self.KP*x_e2+self.KD*xedt2)*np.exp(-x_e2**2/(2*self.RX**2)))
-
-        
-        return vx
-
-index = count()
-yVals = []
-xVals = []
-
-
-def animate(i):
-    xVals.append(next(index))
-    #yVals.append(qtm_wrapper.pose[0][0]/1000.)
-    yVals.append(random.randint(0, 10))
-
-    plt.cla()
-    plt.plot(xVals, yVals)
-
-# ani = FuncAnimation(plt.gcf(), animate, interval=500)
-# plt.tight_layout()
-# plt.show()
-
-
-
-
 if __name__ == '__main__':
     cflib.crtp.init_drivers()
 
@@ -288,6 +265,15 @@ if __name__ == '__main__':
     with SyncCrazyflie(uri, cf=Crazyflie(rw_cache='./cache')) as scf:
         cf = scf.cf
         trajectory_id = 1
+
+        DEFAULT_HEIGHT = 0.3
+        TS = 0.1
+        KP = 2.3
+        KD = 0.557
+        RX = 0.14
+        RY = 0.14
+
+        controller = PDController()
 
         # Set up a callback to handle data from QTM
         qtm_wrapper.on_pose = lambda pose: send_extpose_rot_matrix(
@@ -302,108 +288,68 @@ if __name__ == '__main__':
         current_yaw = qtm_wrapper.pose[1][0]
 
         start_time = time.time()
-
-        pd = PDController()
-
-        state = "null"
-        current_xVals = []
-        p1Vals = []
-        p2Vals = []
-        vxVals = []
-        timeVals = []
-        XVVals = []
-        X_e1Vals = []
-        X_e2Vals = []
-
-
-        now = datetime.datetime.now()  # Generate a unique timestamp
-        timestamp = now.strftime("%Y-%m-%d-%H-%M-%S")  # Format timestamp as a string
-        filename = f'drone_data_{timestamp}.csv'  # Create a unique file name
-
-
-        # for i in range(10000):
-        while(True):
-            # Set up a callback to handle data from QTM
-
-            current_x = qtm_wrapper.pose[0][0]/1000.
-            current_y = qtm_wrapper.pose[0][1]/1000.
-            current_z = qtm_wrapper.pose[0][2]/1000.
-            current_yaw = qtm_wrapper.pose[1][0]
-
-            cur_time = time.time() - start_time
-
-
-            des_z = 1.0
-
-            
-            if cur_time < 3:    # try to take off and hover for the first 3 seconds
-                state = "takeoff"
-                go_to_height_with_pd(cf, [current_x, current_y, current_z, current_yaw], des_z=des_z, pd=pd)
-
-            elif 3 < cur_time < 10:# elif
-                state = "flight"
-            
-                # Calculate v_x from Liang's method
-                factor = 10
-                p1 = [0.1, 0.0, des_z]
-                p2 = [-0.1, 0.0, des_z]
-                X_e1 = pd.current_pos[0] - p1[0]
-                X_e2 = pd.current_pos[0] - p2[0]
-                v_x = pd.get_vx_from_controller([current_x, current_y, current_z, current_yaw], p1, p2)
-                xv = current_x + v_x*pd.waypoint_time
-                
-                
-                # just make the y- and z-velocity zero (also Yaw) with a P-controller
-                
-                v_y = 0.0-pd.k_P_xy*current_y
-                v_z = pd.k_P_z*(des_z - current_z)
-                v_yaw = -0.01*current_yaw
-                cf.commander.send_velocity_world_setpoint(v_x, 0*v_y, 0*v_z, 0*v_yaw)
-
-                pd.last_pos = [current_x, current_y, current_z, current_yaw]
-
-                target_reached = 0.90*p1[0] < current_x < p1[0]* 0.95 or abs(0.90*p2[0]) < abs(current_x) < abs(p2[0]* 0.95)
-            
-                if not target_reached:
         
-                    current_xVals.append(current_x ) # HEEEEEEEEEEEEEEEERE FAAAAAAAAACTOOOOOOOOOOOOOR
-                    p1Vals.append(p1[0])
-                    p2Vals.append(p2[0])
-                    vxVals.append(v_x)
-                    timeVals.append(cur_time)
-                    XVVals.append(xv)
-                    X_e1Vals.append(X_e1)
-                    X_e2Vals.append(X_e2)
-                if target_reached:
-                    print("Target reached")
-                    
-                    for i in range(100):
-                        go_to_height_with_pd(cf, [current_x, current_y, current_z, current_yaw], des_z=des_z, pd=pd)
-                        time.sleep(0.01)
-                    
-                    # break
+        # define your targets points
+        p1 = [1, 0, 1]
+        p2 = [-1, 0, 1]
 
-            
-                    
-                    if current_z>0.2:
-                        go_to_height_with_pd(cf, [current_x, current_y, current_z, current_yaw], des_z=-0.05, pd=pd)
-                    else:
-                        cf.commander.send_velocity_world_setpoint(0, 0, 0, 0) # set all the motors off
-                    break
+        prev_time = time.time()
+        stabilization_time = 5  # Adjust as required
+        stabilized = False
 
+    while True:
+        current_time = time.time()
+        time_diff = current_time - prev_time
 
-    # Save the data to a CSV file
-    data = zip(timeVals, p1Vals, p2Vals, X_e1Vals, X_e2Vals, xv, vxVals, current_xVals)
-    with open(filename,'w', newline='') as csvfile:
-        csvwriter = csv.writer(csvfile)
-        csvwriter.writerow(['Time', 'P1', 'P2', 'x_e1', 'x_e2', 'xv', 'vx', 'current_x'])
-        csvwriter.writerows(data)
+        current_x = qtm_wrapper.pose[0][0] / 1000.
+        current_y = qtm_wrapper.pose[0][1] / 1000.
+        current_z = qtm_wrapper.pose[0][2] / 1000.
+        current_yaw = qtm_wrapper.pose[1][0]
 
-    print("Data saved to in file: ", filename)
+        if not stabilized and current_time - prev_time < stabilization_time:
+            go_to_height(cf, [current_x, current_y, current_z, current_yaw], des_z=1.0)
+        else:
+            stabilized = True
+            noise = 0  # Adjust if necessary
+            updated_x = controller.droneUpdate([current_x, current_y, current_z], p1, p2, time_diff, noise)
+            desired_velocity_x = updated_x - current_x  # Proportional controller to update x
 
-    
+            if current_z > 0.2:
+                cf.commander.send_velocity_world_setpoint(desired_velocity_x, 0, -0.05, 0)
+            else:
+                cf.commander.send_velocity_world_setpoint(0, 0, 0, 0)
+                break  # Assuming you want to exit the loop once the drone has descended
+
+        prev_time = current_time
+
     qtm_wrapper.close()
 
-    plt.plot(xv, label="xv")
-    plt.tight_layout()
-    plt.show()
+
+            # cur_time = time.time() - start_time
+
+            # # print(cur_time)
+
+            # if cur_time < 5:    # try to take off and hover for the first 5 seconds
+            #     go_to_height(cf, [current_x, current_y, current_z, current_yaw], des_z=1.0)
+
+            # elif 5 <= cur_time < 10:   # use the PD controller for movement between 5 and 10 seconds
+            #     t1 = time.time()
+            #     current_x = PDController.droneUpdate(controller, [current_x, current_y, current_z], p1, p2, cur_time, t1, current_yaw)
+            #     t2 = time.time()
+            #     # use the updated current_x to command the drone
+            #     # (add other control here if necessary)
+
+            # else:  # land smoothly to 0.2, and then shut down the motors
+            #     if current_z>0.2:
+            #         go_to_height(cf, [current_x, current_y, current_z, current_yaw], des_z=-0.05)
+            #     else:
+            #         cf.commander.send_velocity_world_setpoint(0, 0, 0, 0) # set all the motors off
+            #         break
+            # # print(qtm_wrapper.pose[0][2]/1000)
+
+            # # time.sleep(0.1)
+    
+
+
+        
+

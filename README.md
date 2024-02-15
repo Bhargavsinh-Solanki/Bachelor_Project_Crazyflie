@@ -25,7 +25,7 @@ Run the automated build locally to test your code
 # Bachelor Project data is stored in the folder "BS_Bachelor_Project".
  ## Path for the file: "BS_Bachelor_Project/BSBachelorProject.py"
  
- ## Steps: 
+ ## Steps to run the code : 
  * Check the crazyflie uri radio address
  * Check the rigid body name
  * Check the IP address of the Qualisys Tracking System

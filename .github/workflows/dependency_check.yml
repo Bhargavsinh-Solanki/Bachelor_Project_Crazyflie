@@ -12,7 +12,7 @@ jobs:
       image: python:latest
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
 
       - name: python version
         run: python --version
@@ -20,13 +20,27 @@ jobs:
       - name: install lib
         run: pip install -e .
 
-  minimum-python37:
+  python-python311:
     runs-on: ubuntu-latest
     container:
-      image: python:3.7
+      image: python:3.11
 
     steps:
-      - uses: actions/checkout@v3
+      - uses: actions/checkout@v4
+
+      - name: python version
+        run: python --version
+
+      - name: install lib
+        run: pip install -e .
+
+  minimum-python310:
+    runs-on: ubuntu-latest
+    container:
+      image: python:3.10
+
+    steps:
+      - uses: actions/checkout@v4
 
       - name: python version
         run: python --version

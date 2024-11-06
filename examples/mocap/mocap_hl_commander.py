@@ -6,7 +6,7 @@
 # | / ,--'  |    / /_/ / / /_/ /__/ /  / /_/ / / /_/  __/
 #    +------`   /_____/_/\__/\___/_/   \__,_/ /___/\___/
 #
-# Copyright (C) 2019 Bitcraze AB
+# Copyright (C) 2023 Bitcraze AB
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -20,21 +20,18 @@
 # You should have received a copy of the GNU General Public License
 # along with this program. If not, see <http://www.gnu.org/licenses/>.
 """
-Example of how to connect to a Qualisys QTM system and feed the position to a
-Crazyflie. It uses the high level commander to upload a trajectory to fly a
-figure 8.
+Example of how to connect to a motion capture system and feed the position to a
+Crazyflie, using the motioncapture library. The motioncapture library supports all major mocap systems and provides
+a generalized API regardless of system type.
+The script uses the high level commander to upload a trajectory to fly a figure 8.
 
 Set the uri to the radio settings of the Crazyflie and modify the
-rigid_body_name to match the name of the Crazyflie in QTM.
+mocap setting matching your system.
 """
-import asyncio
-import math
 import time
-import xml.etree.cElementTree as ET
 from threading import Thread
 
-import qtm
-from scipy.spatial.transform import Rotation
+import motioncapture
 
 import cflib.crtp
 from cflib.crazyflie import Crazyflie
@@ -48,7 +45,14 @@ from cflib.utils import uri_helper
 # URI to the Crazyflie to connect to
 uri = uri_helper.uri_from_env(default='radio://0/80/2M/E7E7E7E7E7')
 
-# The name of the rigid body in QTM that represents the Crazyflie
+# The host name or ip address of the mocap system
+host_name = '192.168.5.21'
+
+# The type of the mocap system
+# Valid options are: 'vicon', 'optitrack', 'optitrack_closed_source', 'qualisys', 'nokov', 'vrpn', 'motionanalysis'
+mocap_system_type = 'qualisys'
+
+# The name of the rigid body that represents the Crazyflie
 rigid_body_name = 'cf'
 
 # True: send position and orientation; False: send position only
@@ -77,81 +81,28 @@ figure8 = [
 ]
 
 
-class QtmWrapper(Thread):
+class MocapWrapper(Thread):
     def __init__(self, body_name):
         Thread.__init__(self)
 
         self.body_name = body_name
         self.on_pose = None
-        self.connection = None
-        self.qtm_6DoF_labels = []
         self._stay_open = True
 
         self.start()
 
     def close(self):
         self._stay_open = False
-        self.join()
 
     def run(self):
-        asyncio.run(self._life_cycle())
-
-    async def _life_cycle(self):
-        await self._connect()
-        while (self._stay_open):
-            await asyncio.sleep(1)
-        await self._close()
-
-    async def _connect(self):
-        qtm_instance = await self._discover()
-        host = qtm_instance.host
-        print('Connecting to QTM on ' + host)
-        self.connection = await qtm.connect(host)
-
-        params = await self.connection.get_parameters(parameters=['6d'])
-        xml = ET.fromstring(params)
-        self.qtm_6DoF_labels = [label.text.strip() for index, label in enumerate(xml.findall('*/Body/Name'))]
-
-        await self.connection.stream_frames(
-            components=['6D'],
-            on_packet=self._on_packet)
-
-    async def _discover(self):
-        async for qtm_instance in qtm.Discover('0.0.0.0'):
-            return qtm_instance
-
-    def _on_packet(self, packet):
-        header, bodies = packet.get_6d()
-
-        if bodies is None:
-            return
-
-        if self.body_name not in self.qtm_6DoF_labels:
-            print('Body ' + self.body_name + ' not found.')
-        else:
-            index = self.qtm_6DoF_labels.index(self.body_name)
-            temp_cf_pos = bodies[index]
-            x = temp_cf_pos[0][0] / 1000
-            y = temp_cf_pos[0][1] / 1000
-            z = temp_cf_pos[0][2] / 1000
-
-            r = temp_cf_pos[1].matrix
-            rot = [
-                [r[0], r[3], r[6]],
-                [r[1], r[4], r[7]],
-                [r[2], r[5], r[8]],
-            ]
-
-            if self.on_pose:
-                # Make sure we got a position
-                if math.isnan(x):
-                    return
-
-                self.on_pose([x, y, z, rot])
-
-    async def _close(self):
-        await self.connection.stream_frames_stop()
-        self.connection.disconnect()
+        mc = motioncapture.connect(mocap_system_type, {'hostname': host_name})
+        while self._stay_open:
+            mc.waitForNextFrame()
+            for name, obj in mc.rigidBodies.items():
+                if name == self.body_name:
+                    if self.on_pose:
+                        pos = obj.position
+                        self.on_pose([pos[0], pos[1], pos[2], obj.rotation])
 
 
 def wait_for_position_estimator(scf):
@@ -195,26 +146,13 @@ def wait_for_position_estimator(scf):
                 break
 
 
-def _sqrt(a):
+def send_extpose_quat(cf, x, y, z, quat):
     """
-    There might be rounding errors making 'a' slightly negative.
-    Make sure we don't throw an exception.
+    Send the current Crazyflie X, Y, Z position and attitude as a quaternion.
+    This is going to be forwarded to the Crazyflie's position estimator.
     """
-    if a < 0.0:
-        return 0.0
-    return math.sqrt(a)
-
-
-def send_extpose_rot_matrix(cf, x, y, z, rot):
-    """
-    Send the current Crazyflie X, Y, Z position and attitude as a (3x3)
-    rotaton matrix. This is going to be forwarded to the Crazyflie's
-    position estimator.
-    """
-    quat = Rotation.from_matrix(rot).as_quat()
-
     if send_full_pose:
-        cf.extpos.send_extpose(x, y, z, quat[0], quat[1], quat[2], quat[3])
+        cf.extpos.send_extpose(x, y, z, quat.x, quat.y, quat.z, quat.w)
     else:
         cf.extpos.send_extpos(x, y, z)
 
@@ -279,16 +217,15 @@ def run_sequence(cf, trajectory_id, duration):
 if __name__ == '__main__':
     cflib.crtp.init_drivers()
 
-    # Connect to QTM
-    qtm_wrapper = QtmWrapper(rigid_body_name)
+    # Connect to the mocap system
+    mocap_wrapper = MocapWrapper(rigid_body_name)
 
     with SyncCrazyflie(uri, cf=Crazyflie(rw_cache='./cache')) as scf:
         cf = scf.cf
         trajectory_id = 1
 
-        # Set up a callback to handle data from QTM
-        qtm_wrapper.on_pose = lambda pose: send_extpose_rot_matrix(
-            cf, pose[0], pose[1], pose[2], pose[3])
+        # Set up a callback to handle data from the mocap system
+        mocap_wrapper.on_pose = lambda pose: send_extpose_quat(cf, pose[0], pose[1], pose[2], pose[3])
 
         adjust_orientation_sensitivity(cf)
         activate_kalman_estimator(cf)
@@ -298,4 +235,4 @@ if __name__ == '__main__':
         reset_estimator(cf)
         run_sequence(cf, trajectory_id, duration)
 
-    qtm_wrapper.close()
+    mocap_wrapper.close()

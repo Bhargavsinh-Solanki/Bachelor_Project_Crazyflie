@@ -7,9 +7,13 @@ from setuptools import setup
 directory = Path(__file__).parent
 long_description = (directory / 'README.md').read_text()
 
+package_data = {
+    'cflib.resources.binaries': ['cflib/resources/binaries/*.bin'],
+}
+
 setup(
     name='cflib',
-    version='0.1.22',
+    version='0.1.27',
     packages=find_packages(exclude=['examples', 'test']),
 
     description='Crazyflie python driver',
@@ -36,7 +40,8 @@ setup(
         'pyusb>=1.0.0b2',
         'libusb-package~=1.0',
         'scipy~=1.7',
-        'numpy>=1.20,<1.25',
+        'numpy~=1.20',
+        'packaging~=24.0',
     ],
 
     # $ pip install -e .[dev]
@@ -45,4 +50,7 @@ setup(
             'pre-commit'
         ],
     },
+
+    include_package_data=True,
+    package_data=package_data
 )

@@ -5,7 +5,9 @@ page_id: install
 
 ## Requirements
 
-This project requires Python 3.7+.
+This project requires Python 3.10+.
+
+
 See below sections for more platform-specific requirements.
 ## Install from Source
 ### Clone  the repository
@@ -26,7 +28,7 @@ pip uninstall cflib
 
 Note: If you are developing for the cflib you must use python3. On Ubuntu (20.04+) use `pip3` instead of `pip`.
 
-### Linux, OSX, Windows
+### Linux, macOS, Windows
 
 The following should be executed in the root of the crazyflie-lib-python file tree.
 
@@ -42,8 +44,8 @@ you can skip this section.
 
 * To deactivate the virtualenv when you are done using it `deactivate`
 
-### Pre commit hooks (Ubuntu)
-If you want some extra help with keeping to the mandated python coding style you can install hooks that verify your style at commit time. This is done by running:
+### Pre-commit hooks (Ubuntu)
+If you want some extra help with keeping to the mandated Python coding style you can install hooks that verify your style at commit time. This is done by running:
 ```
 $ pip3 install pre-commit
 ```
@@ -75,3 +77,15 @@ With linux, the crazyradio is easily recognized, but you have to setup UDEVpermi
 ### Windows
 
 Look at the [Zadig crazyradio instructions](https://www.bitcraze.io/documentation/repository/crazyradio-firmware/master/building/usbwindows/) to install crazyradio on Windows
+
+### macOS
+If you are using python 3.12 on mac you need to install libusb using homebrew.
+```
+$ brew install libusb
+```
+
+If your Homebrew installation is in a non default location or if you want to install libusb in some other way you
+might need to link the libusb library like this;
+```
+$ export DYLD_LIBRARY_PATH="YOUR_HOMEBREW_PATH/lib:$DYLD_LIBRARY_PATH"
+```
